@@ -25,6 +25,56 @@ import scipy
 
 
 class TabNetPretrainer(TabModel):
+    def __init__(
+        self,
+        n_d=8,
+        n_a=8,
+        n_steps=3,
+        gamma=1.3,
+        cat_idxs=[],
+        cat_dims=[],
+        cat_emb_dim=1,
+        n_independent=2,
+        n_shared=2,
+        epsilon=1e-15,
+        momentum=0.02,
+        lambda_sparse=1e-3,
+        seed=0,
+        clip_value=1,
+        verbose=1,
+        optimizer_fn=torch.optim.Adam,
+        optimizer_params=dict(lr=2e-2),
+        scheduler_fn=None,
+        scheduler_params=dict(),
+        mask_type="sparsemax",
+        input_dim=None,
+        output_dim=None,
+        device_name="auto",
+        n_shared_decoder=1,
+        n_indep_decoder=1,
+        grouped_features=[],
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
+        **kwargs
+    ):
+        super(TabNetPretrainer, self).__init__(
+            n_d=n_d, n_a=n_a, n_steps=n_steps, gamma=gamma,
+            cat_idxs=cat_idxs, cat_dims=cat_dims, cat_emb_dim=cat_emb_dim,
+            n_independent=n_independent, n_shared=n_shared, epsilon=epsilon,
+            momentum=momentum, lambda_sparse=lambda_sparse, seed=seed,
+            clip_value=clip_value, verbose=verbose, optimizer_fn=optimizer_fn,
+            optimizer_params=optimizer_params, scheduler_fn=scheduler_fn,
+            scheduler_params=scheduler_params, mask_type=mask_type,
+            input_dim=input_dim, output_dim=output_dim, device_name=device_name,
+            n_shared_decoder=n_shared_decoder, n_indep_decoder=n_indep_decoder,
+            grouped_features=grouped_features, **kwargs
+        )
+        # store KAN params
+        self.use_kan = use_kan
+        self.kan_grid_size = kan_grid_size
+        self.kan_spline_order = kan_spline_order
+
     def __post_init__(self):
         super(TabNetPretrainer, self).__post_init__()
         self._task = 'unsupervised'
@@ -197,6 +247,9 @@ class TabNetPretrainer(TabModel):
             momentum=self.momentum,
             mask_type=self.mask_type,
             group_attention_matrix=self.group_matrix.to(self.device),
+            use_kan=self.use_kan,
+            kan_grid_size=self.kan_grid_size,
+            kan_spline_order=self.kan_spline_order
         ).to(self.device)
 
         self.reducing_matrix = create_explain_matrix(

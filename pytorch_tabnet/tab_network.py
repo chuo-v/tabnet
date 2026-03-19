@@ -3,6 +3,11 @@ from torch.nn import Linear, BatchNorm1d, ReLU
 import numpy as np
 from pytorch_tabnet import sparsemax
 
+try:
+    from efficient_kan import KANLinear
+except ImportError:
+    KANLinear = None
+
 
 def initialize_non_glu(module, input_dim, output_dim):
     gain_value = np.sqrt((input_dim + output_dim) / np.sqrt(4 * input_dim))
@@ -54,6 +59,9 @@ class TabNetEncoder(torch.nn.Module):
         momentum=0.02,
         mask_type="sparsemax",
         group_attention_matrix=None,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -87,6 +95,12 @@ class TabNetEncoder(torch.nn.Module):
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
             Matrix of size (n_groups, input_dim), m_ij = importance within group i of feature j
+        use_kan : bool
+            Whether to use Kolmogorov-Arnold Network (KAN) layers instead of Linear layers
+        kan_grid_size : int
+            Number of grid points for the KAN spline basis functions
+        kan_spline_order : int
+            The polynomial order of the KAN splines
         """
         super(TabNetEncoder, self).__init__()
         self.input_dim = input_dim
@@ -115,13 +129,33 @@ class TabNetEncoder(torch.nn.Module):
             shared_feat_transform = torch.nn.ModuleList()
             for i in range(self.n_shared):
                 if i == 0:
-                    shared_feat_transform.append(
-                        Linear(self.input_dim, 2 * (n_d + n_a), bias=False)
-                    )
+                    if use_kan and KANLinear is not None:
+                        shared_feat_transform.append(
+                            KANLinear(
+                                self.input_dim,
+                                2 * (n_d + n_a),
+                                grid_size=kan_grid_size,
+                                spline_order=kan_spline_order
+                            )
+                        )
+                    else:
+                        shared_feat_transform.append(
+                            Linear(self.input_dim, 2 * (n_d + n_a), bias=False)
+                        )
                 else:
-                    shared_feat_transform.append(
-                        Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
-                    )
+                    if use_kan and KANLinear is not None:
+                        shared_feat_transform.append(
+                            KANLinear(
+                                n_d + n_a,
+                                2 * (n_d + n_a),
+                                grid_size=kan_grid_size,
+                                spline_order=kan_spline_order
+                            )
+                        )
+                    else:
+                        shared_feat_transform.append(
+                            Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
+                        )
 
         else:
             shared_feat_transform = None
@@ -133,6 +167,9 @@ class TabNetEncoder(torch.nn.Module):
             n_glu_independent=self.n_independent,
             virtual_batch_size=self.virtual_batch_size,
             momentum=momentum,
+            use_kan=use_kan,
+            kan_grid_size=kan_grid_size,
+            kan_spline_order=kan_spline_order
         )
 
         self.feat_transformers = torch.nn.ModuleList()
@@ -146,6 +183,9 @@ class TabNetEncoder(torch.nn.Module):
                 n_glu_independent=self.n_independent,
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
+                use_kan=use_kan,
+                kan_grid_size=kan_grid_size,
+                kan_spline_order=kan_spline_order
             )
             attention = AttentiveTransformer(
                 n_a,
@@ -224,6 +264,9 @@ class TabNetDecoder(torch.nn.Module):
         n_shared=1,
         virtual_batch_size=128,
         momentum=0.02,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -249,6 +292,12 @@ class TabNetDecoder(torch.nn.Module):
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in all batch norm
+        use_kan : bool
+            Whether to use Kolmogorov-Arnold Network (KAN) layers instead of Linear layers
+        kan_grid_size : int
+            Number of grid points for the KAN spline basis functions
+        kan_spline_order : int
+            The polynomial order of the KAN splines
         """
         super(TabNetDecoder, self).__init__()
         self.input_dim = input_dim
@@ -263,7 +312,17 @@ class TabNetDecoder(torch.nn.Module):
         if self.n_shared > 0:
             shared_feat_transform = torch.nn.ModuleList()
             for i in range(self.n_shared):
-                shared_feat_transform.append(Linear(n_d, 2 * n_d, bias=False))
+                if use_kan and KANLinear is not None:
+                    shared_feat_transform.append(
+                        KANLinear(
+                            n_d,
+                            2 * n_d,
+                            grid_size=kan_grid_size,
+                            spline_order=kan_spline_order
+                        )
+                    )
+                else:
+                    shared_feat_transform.append(Linear(n_d, 2 * n_d, bias=False))
         else:
             shared_feat_transform = None
 
@@ -275,11 +334,22 @@ class TabNetDecoder(torch.nn.Module):
                 n_glu_independent=self.n_independent,
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
+                use_kan=use_kan,
+                kan_grid_size=kan_grid_size,
+                kan_spline_order=kan_spline_order
             )
             self.feat_transformers.append(transformer)
 
-        self.reconstruction_layer = Linear(n_d, self.input_dim, bias=False)
-        initialize_non_glu(self.reconstruction_layer, n_d, self.input_dim)
+        if use_kan and KANLinear is not None:
+            self.reconstruction_layer = KANLinear(
+                n_d,
+                self.input_dim,
+                grid_size=kan_grid_size,
+                spline_order=kan_spline_order
+            )
+        else:
+            self.reconstruction_layer = Linear(n_d, self.input_dim, bias=False)
+            initialize_non_glu(self.reconstruction_layer, n_d, self.input_dim)
 
     def forward(self, steps_output):
         res = 0
@@ -311,6 +381,9 @@ class TabNetPretraining(torch.nn.Module):
         n_shared_decoder=1,
         n_indep_decoder=1,
         group_attention_matrix=None,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         super(TabNetPretraining, self).__init__()
 
@@ -360,6 +433,9 @@ class TabNetPretraining(torch.nn.Module):
             momentum=momentum,
             mask_type=mask_type,
             group_attention_matrix=self.embedder.embedding_group_matrix,
+            use_kan=use_kan,
+            kan_grid_size=kan_grid_size,
+            kan_spline_order=kan_spline_order
         )
         self.decoder = TabNetDecoder(
             self.post_embed_dim,
@@ -369,6 +445,9 @@ class TabNetPretraining(torch.nn.Module):
             n_shared=self.n_shared_decoder,
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
+            use_kan=use_kan,
+            kan_grid_size=kan_grid_size,
+            kan_spline_order=kan_spline_order
         )
 
     def forward(self, x):
@@ -412,6 +491,9 @@ class TabNetNoEmbeddings(torch.nn.Module):
         momentum=0.02,
         mask_type="sparsemax",
         group_attention_matrix=None,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -445,6 +527,12 @@ class TabNetNoEmbeddings(torch.nn.Module):
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
             Matrix of size (n_groups, input_dim), m_ij = importance within group i of feature j
+        use_kan : bool
+            Whether to use Kolmogorov-Arnold Network (KAN) layers instead of Linear layers
+        kan_grid_size : int
+            Number of grid points for the KAN spline basis functions
+        kan_spline_order : int
+            The polynomial order of the KAN splines
         """
         super(TabNetNoEmbeddings, self).__init__()
         self.input_dim = input_dim
@@ -474,7 +562,10 @@ class TabNetNoEmbeddings(torch.nn.Module):
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
             mask_type=mask_type,
-            group_attention_matrix=group_attention_matrix
+            group_attention_matrix=group_attention_matrix,
+            use_kan=use_kan,
+            kan_grid_size=kan_grid_size,
+            kan_spline_order=kan_spline_order
         )
 
         if self.is_multi_task:
@@ -524,6 +615,9 @@ class TabNet(torch.nn.Module):
         momentum=0.02,
         mask_type="sparsemax",
         group_attention_matrix=[],
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         """
         Defines TabNet network
@@ -565,6 +659,12 @@ class TabNet(torch.nn.Module):
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
             Matrix of size (n_groups, input_dim), m_ij = importance within group i of feature j
+        use_kan : bool
+            Whether to use Kolmogorov-Arnold Network (KAN) layers instead of Linear layers
+        kan_grid_size : int
+            Number of grid points for the KAN spline basis functions
+        kan_spline_order : int
+            The polynomial order of the KAN splines
         """
         super(TabNet, self).__init__()
         self.cat_idxs = cat_idxs or []
@@ -581,6 +681,9 @@ class TabNet(torch.nn.Module):
         self.n_independent = n_independent
         self.n_shared = n_shared
         self.mask_type = mask_type
+        self.use_kan = use_kan
+        self.kan_grid_size = kan_grid_size
+        self.kan_spline_order = kan_spline_order
 
         if self.n_steps <= 0:
             raise ValueError("n_steps should be a positive integer.")
@@ -608,7 +711,10 @@ class TabNet(torch.nn.Module):
             virtual_batch_size,
             momentum,
             mask_type,
-            self.embedder.embedding_group_matrix
+            self.embedder.embedding_group_matrix,
+            use_kan=use_kan,
+            kan_grid_size=kan_grid_size,
+            kan_spline_order=kan_spline_order
         )
 
     def forward(self, x):
@@ -681,6 +787,9 @@ class FeatTransformer(torch.nn.Module):
         n_glu_independent,
         virtual_batch_size=128,
         momentum=0.02,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         super(FeatTransformer, self).__init__()
         """
@@ -700,12 +809,21 @@ class FeatTransformer(torch.nn.Module):
             Batch size for Ghost Batch Normalization within GLU block(s)
         momentum : float
             Float value between 0 and 1 which will be used for momentum in batch norm
+        use_kan : bool
+            Whether to use Kolmogorov-Arnold Network (KAN) layers instead of Linear layers
+        kan_grid_size : int
+            Number of grid points for the KAN spline basis functions
+        kan_spline_order : int
+            The polynomial order of the KAN splines
         """
 
         params = {
             "n_glu": n_glu_independent,
             "virtual_batch_size": virtual_batch_size,
             "momentum": momentum,
+            "use_kan": use_kan,
+            "kan_grid_size": kan_grid_size,
+            "kan_spline_order": kan_spline_order,
         }
 
         if shared_layers is None:
@@ -721,6 +839,9 @@ class FeatTransformer(torch.nn.Module):
                 n_glu=len(shared_layers),
                 virtual_batch_size=virtual_batch_size,
                 momentum=momentum,
+                use_kan=use_kan,
+                kan_grid_size=kan_grid_size,
+                kan_spline_order=kan_spline_order
             )
             is_first = False
 
@@ -753,6 +874,9 @@ class GLU_Block(torch.nn.Module):
         shared_layers=None,
         virtual_batch_size=128,
         momentum=0.02,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         super(GLU_Block, self).__init__()
         self.first = first
@@ -760,7 +884,13 @@ class GLU_Block(torch.nn.Module):
         self.n_glu = n_glu
         self.glu_layers = torch.nn.ModuleList()
 
-        params = {"virtual_batch_size": virtual_batch_size, "momentum": momentum}
+        params = {
+            "virtual_batch_size": virtual_batch_size,
+            "momentum": momentum,
+            "use_kan": use_kan,
+            "kan_grid_size": kan_grid_size,
+            "kan_spline_order": kan_spline_order,
+        }
 
         fc = shared_layers[0] if shared_layers else None
         self.glu_layers.append(GLU_Layer(input_dim, output_dim, fc=fc, **params))
@@ -784,16 +914,38 @@ class GLU_Block(torch.nn.Module):
 
 class GLU_Layer(torch.nn.Module):
     def __init__(
-        self, input_dim, output_dim, fc=None, virtual_batch_size=128, momentum=0.02
+        self,
+        input_dim,
+        output_dim,
+        fc=None,
+        virtual_batch_size=128,
+        momentum=0.02,
+        *,
+        use_kan=False,
+        kan_grid_size=5,
+        kan_spline_order=3,
     ):
         super(GLU_Layer, self).__init__()
 
         self.output_dim = output_dim
-        if fc:
+        if fc is not None:
             self.fc = fc
+        elif use_kan:
+                if KANLinear is None:
+                    raise ImportError(
+                        "KANLinear could not be imported. Please install the dependency "
+                        "using 'pip install efficient-kan' to use KAN-TabNet features."
+                    )
+                self.fc = KANLinear(
+                    input_dim,
+                    2 * output_dim,
+                    grid_size=kan_grid_size,
+                    spline_order=kan_spline_order
+                )
         else:
             self.fc = Linear(input_dim, 2 * output_dim, bias=False)
-        initialize_glu(self.fc, input_dim, 2 * output_dim)
+        if not use_kan:
+            initialize_glu(self.fc, input_dim, 2 * output_dim)
 
         self.bn = GBN(
             2 * output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum
