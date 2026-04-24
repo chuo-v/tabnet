@@ -1,3 +1,13 @@
+> **⚠️ KAN-TabNet Fork Notice (Latest Tag: v1.0.1-kan)**
+>
+> This repository is a specialized fork of the original [dreamquark-ai/tabnet](https://github.com/dreamquark-ai/tabnet) library, modified to replace standard dense linear layers with Kolmogorov-Arnold Networks (KAN) utilizing learnable B-splines.
+>
+> * **Project Context:** This fork was developed as the core engine for some empirical research on tabular data topologies. For experimental notebooks, full training logs, serialized model binaries, and visualization artifacts, please visit the companion repository: [kan-tabnet-experiments](https://github.com/chuo-v/kan-tabnet-experiments).
+> * **Implementation Scope:** The KAN routing modifications are implemented for the `TabNetClassifier` and `TabNetPretrainer`. The `TabNetRegressor` and multi-task models remain untouched, retaining their original interfaces and core logic.
+> * **Usage:** To enable the KAN architecture, simply initialize the classifier with the new flag: `clf = TabNetClassifier(use_kan=True)`. If omitted or set to `False`, the model defaults to the original vanilla TabNet behavior.
+
+---
+
 # README
 
 # TabNet : Attentive Interpretable Tabular Learning
